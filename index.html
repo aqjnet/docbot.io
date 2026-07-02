@@ -189,7 +189,7 @@ h2{font-family:var(--disp);font-weight:600;font-size:clamp(26px,3.6vw,38px);lett
 .demo-grid{display:grid;grid-template-columns:1.15fr 1fr 1fr;min-height:480px}
 @media (max-width:1020px){.demo-grid{grid-template-columns:1fr 1fr}.demo-col.audit-col{grid-column:1/-1;border-left:none;border-top:1px solid var(--hair)}}
 @media (max-width:720px){.demo-grid{grid-template-columns:1fr}.demo-col{border-left:none!important;border-top:1px solid var(--hair)}}
-.demo-col{padding:18px;border-left:1px solid var(--hair);min-width:0}
+.demo-col{padding:18px;border-left:1px solid var(--hair);min-width:0;height:480px;overflow-y:auto;overflow-x:hidden;box-sizing:border-box}
 .demo-col:first-child{border-left:none}
 .col-lbl{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin:0 0 13px;display:flex;align-items:center;gap:8px}
 .col-lbl .cnt{margin-left:auto;color:var(--muted);letter-spacing:0}
@@ -214,7 +214,7 @@ tr.commit-flash td{background:rgba(95,190,138,.14)}
 tr.target td{background:rgba(79,179,196,.08)}
 
 /* mail cards */
-.mailbox{display:flex;flex-direction:column;gap:10px;max-height:430px;overflow:hidden}
+.mailbox{display:flex;flex-direction:column;gap:10px}
 .mail{border:1px solid var(--hair);border-radius:12px;padding:12px 14px;background:var(--panel2);animation:mailin .45s cubic-bezier(.2,.9,.3,1.2)}
 @keyframes mailin{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
 .mail .mh{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-bottom:6px;flex-wrap:wrap}
@@ -249,7 +249,7 @@ tr.target td{background:rgba(79,179,196,.08)}
 .gate-done.ok{color:var(--ok);border-color:rgba(95,190,138,.35)}
 .gate-done.no{color:var(--human);border-color:rgba(255,126,138,.3)}
 .gate-empty{border:1px dashed var(--edge);border-radius:12px;padding:16px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--dim)}
-.audit-stream{font-family:var(--mono);font-size:11px;line-height:1.95;max-height:430px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end}
+.audit-stream{font-family:var(--mono);font-size:11px;line-height:1.95;display:flex;flex-direction:column;justify-content:flex-end}
 .demo-foot{padding:12px 20px;border-top:1px solid var(--hair);background:var(--panel2);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .demo-foot .fnote{font-family:var(--mono);font-size:11px;color:var(--dim)}
 .demo-foot .replay{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--det);background:none;border:1px solid rgba(79,179,196,.4);border-radius:8px;padding:5px 13px;cursor:pointer}
