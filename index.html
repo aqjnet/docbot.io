@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DocBot — the document controller that wakes up and chases</title>
+<meta name="description" content="Proactive AI agents for document control in mid-market AEC. DocBot runs the register-keeping loop 24/7: detects overdue deliverables, chases the right owner, reads the replies, and proposes the update — a human approves anything that carries contractual weight.">
+<meta property="og:title" content="DocBot — it wakes up and chases">
+<meta property="og:description" content="Proactive document-control agents for engineering, construction and manufacturing. Deterministic spine, LLM scalpel, human gate, audit-grade trail.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230F1620'/%3E%3Crect x='7' y='9' width='12' height='14' rx='2' fill='none' stroke='%234FB3C4' stroke-width='2.4'/%3E%3Crect x='21' y='13' width='4' height='10' fill='%23E0A23C'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================== tokens ============================== */
+:root{
+  --bg:#0F1620; --bg2:#0d141d; --panel:#141d2b; --panel2:#111927;
+  --ink:#DCE5F0; --bright:#F2F7FE; --muted:#8A97AD; --dim:#5d6b81;
+  --hair:#23304454; --hair2:#1a2433; --edge:#3A4A60;
+  --det:#4FB3C4; --det-soft:rgba(79,179,196,.13);
+  --llm:#E0A23C; --llm-soft:rgba(224,162,60,.14);
+  --human:#FF7E8A; --human-soft:rgba(255,126,138,.13);
+  --ok:#5FBE8A; --ok-soft:rgba(95,190,138,.14);
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --sans:"IBM Plex Sans",system-ui,sans-serif;
+  --disp:"Space Grotesk",var(--sans);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  line-height:1.6;font-size:16px;overflow-x:hidden;
+}
+/* blueprint grid + glows */
+body::before{
+  content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background-image:
+    linear-gradient(rgba(79,179,196,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(79,179,196,.035) 1px,transparent 1px);
+  background-size:44px 44px;
+  mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 30%,transparent 75%);
+  -webkit-mask-image:radial-gradient(ellipse 90% 60% at 50% 0%,#000 30%,transparent 75%);
+}
+body::after{
+  content:"";position:fixed;inset:0;z-index:-3;pointer-events:none;
+  background:
+    radial-gradient(circle at 15% -8%, #16243a 0%, transparent 44%),
+    radial-gradient(circle at 90% 2%, #1a2030 0%, transparent 40%),
+    radial-gradient(circle at 70% 110%, #131c2c 0%, transparent 50%);
+}
+::selection{background:rgba(79,179,196,.3)}
+a{color:var(--det);text-decoration:none}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+.mono{font-family:var(--mono)}
+code{font-family:var(--mono);font-size:.9em;background:#1c2738;padding:1px 6px;border-radius:5px;color:var(--ink)}
+
+/* ============================== nav ============================== */
+nav{
+  position:sticky;top:0;z-index:50;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  background:rgba(15,22,32,.72);border-bottom:1px solid var(--hair);
+}
+.nav-in{max-width:1180px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:28px}
+.wordmark{font-family:var(--disp);font-weight:700;font-size:19px;letter-spacing:-.02em;color:var(--bright);display:flex;align-items:center;gap:2px}
+.wordmark .cursor{display:inline-block;width:9px;height:19px;background:var(--det);margin-left:5px;animation:blink 1.1s steps(1) infinite;border-radius:1px}
+@keyframes blink{50%{opacity:0}}
+.nav-links{display:flex;gap:22px;margin-left:auto;align-items:center}
+.nav-links a{color:var(--muted);font-size:14px;transition:color .15s}
+.nav-links a:hover{color:var(--ink)}
+.nav-links a.btn,.nav-links a.btn:hover{color:#06222a}
+.pulse-chip{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  border:1px solid var(--hair);border-radius:20px;padding:5px 13px}
+.pulse{width:7px;height:7px;border-radius:50%;background:var(--ok);position:relative}
+.pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--ok);animation:pulsering 2s ease-out infinite}
+@keyframes pulsering{0%{transform:scale(.4);opacity:.9}100%{transform:scale(1.4);opacity:0}}
+.btn{
+  display:inline-block;font-family:var(--disp);font-weight:600;font-size:14.5px;
+  padding:10px 20px;border-radius:10px;border:1px solid var(--det);
+  color:#06222a;background:var(--det);transition:filter .15s, transform .15s;
+}
+.btn:hover{filter:brightness(1.12);transform:translateY(-1px)}
+.btn.ghost{background:transparent;color:var(--det)}
+.btn.ghost:hover{background:var(--det-soft)}
+@media (max-width:760px){.nav-links a:not(.btn){display:none}.pulse-chip{display:none}}
+
+/* ============================== hero ============================== */
+.hero{padding:84px 0 60px;position:relative}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center}
+@media (max-width:920px){.hero-grid{grid-template-columns:1fr}}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--det);margin:0 0 18px;display:flex;align-items:center;gap:10px}
+.eyebrow::before{content:"";width:26px;height:1px;background:var(--det)}
+h1{
+  font-family:var(--disp);font-weight:700;letter-spacing:-.03em;line-height:1.02;
+  font-size:clamp(40px,6.2vw,68px);margin:0 0 22px;color:var(--bright);
+}
+h1 .amber{color:var(--llm)}
+.lede{font-size:17.5px;color:#b7c4d8;max-width:54ch;margin:0 0 30px}
+.lede b{color:var(--bright);font-weight:600}
+.hero-ctas{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.hero-note{font-family:var(--mono);font-size:12px;color:var(--dim);margin-top:22px}
+
+/* terminal */
+.term{
+  border:1px solid var(--hair);border-radius:16px;background:var(--bg2);
+  box-shadow:0 30px 80px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(79,179,196,.04);
+  overflow:hidden;min-height:378px;display:flex;flex-direction:column;
+}
+.term-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-bottom:1px solid var(--hair);background:var(--panel2)}
+.term-dot{width:10px;height:10px;border-radius:50%;background:#26364c}
+.term-title{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-left:8px}
+.term-badge{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ok);border:1px solid rgba(95,190,138,.4);border-radius:12px;padding:2px 9px}
+.term-body{padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:1.9;flex:1;overflow:hidden;position:relative}
+.term-body::after{content:"";position:absolute;inset:auto 0 0 0;height:46px;background:linear-gradient(transparent,var(--bg2));pointer-events:none}
+.tl{white-space:pre-wrap;word-break:break-word;opacity:0;animation:tlin .3s ease forwards}
+@keyframes tlin{to{opacity:1}}
+.tl .t{color:var(--dim)}
+.tl .n-det{color:var(--det)} .tl .n-llm{color:var(--llm)} .tl .n-hum{color:var(--human)} .tl .n-ok{color:var(--ok)}
+.tl .d{color:var(--muted)}
+.caret{display:inline-block;width:7px;height:13px;background:var(--det);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+
+/* ============================== sections ============================== */
+section{padding:88px 0;position:relative}
+.sec-eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--det);margin:0 0 14px}
+h2{font-family:var(--disp);font-weight:600;font-size:clamp(26px,3.6vw,38px);letter-spacing:-.02em;line-height:1.12;margin:0 0 14px;color:var(--bright)}
+.sec-sub{color:var(--muted);font-size:16px;max-width:62ch;margin:0 0 44px}
+.sec-sub b{color:var(--ink)}
+.hr{height:1px;background:linear-gradient(90deg,transparent,var(--hair2) 20%,var(--hair2) 80%,transparent)}
+
+/* reveal */
+.rv{opacity:0;transform:translateY(22px);transition:opacity .7s ease,transform .7s ease}
+.rv.on{opacity:1;transform:none}
+@media (prefers-reduced-motion: reduce){
+  .rv{opacity:1;transform:none;transition:none}
+  .pulse::after,.wordmark .cursor,.caret{animation:none}
+  html{scroll-behavior:auto}
+}
+
+/* ============================== problem ============================== */
+.prob-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+@media (max-width:860px){.prob-grid{grid-template-columns:1fr}}
+.prob{border:1px solid var(--hair);border-radius:16px;padding:26px;background:linear-gradient(180deg,var(--panel),var(--panel2))}
+.prob .big{font-family:var(--disp);font-weight:700;font-size:34px;letter-spacing:-.02em;color:var(--bright);margin:0 0 6px}
+.prob .big span{color:var(--llm)}
+.prob p{margin:0;color:var(--muted);font-size:14px}
+.prob .tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);display:block;margin-bottom:16px}
+
+/* ============================== how / loop ============================== */
+.legend{display:flex;flex-wrap:wrap;gap:10px 24px;align-items:center;margin:0 0 26px}
+.chip{display:inline-flex;align-items:center;gap:9px;font-size:13.5px;color:#cdd8ea}
+.sw{width:13px;height:13px;border-radius:4px;border:1.5px solid}
+.sw.det{background:var(--det-soft);border-color:var(--det)}
+.sw.llm{background:var(--llm-soft);border-color:var(--llm)}
+.sw.hum{background:var(--human-soft);border-color:var(--human)}
+.lane{
+  border:1px solid var(--hair);border-radius:16px;padding:20px 18px 16px;background:var(--bg2);
+  margin-bottom:14px;overflow-x:auto;
+}
+.lane-lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin:0 0 14px}
+.lane-row{display:flex;align-items:stretch;gap:8px;min-width:max-content;padding-bottom:6px}
+.nodechip{border:1.4px solid;border-radius:10px;padding:9px 13px;min-width:118px;position:relative;flex:0 0 auto;transition:transform .2s,box-shadow .2s}
+.nodechip:hover{transform:translateY(-2px)}
+.nodechip .k{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;position:absolute;top:6px;right:9px;opacity:.85}
+.nodechip .id{font-family:var(--mono);font-size:12px;display:block;margin-top:8px;color:var(--ink)}
+.nodechip .ds{font-size:10.5px;color:var(--muted);display:block;margin-top:2px}
+.nodechip.det{background:var(--det-soft);border-color:var(--det)} .nodechip.det .k{color:var(--det)}
+.nodechip.llm{background:var(--llm-soft);border-color:var(--llm)} .nodechip.llm .k{color:var(--llm)}
+.nodechip.hum{background:var(--human-soft);border-color:var(--human)} .nodechip.hum .k{color:var(--human)}
+.flow-arr{align-self:center;color:var(--edge);flex:0 0 auto;font-size:15px}
+.how-notes{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:30px}
+@media (max-width:860px){.how-notes{grid-template-columns:1fr}}
+.hnote{border:1px solid var(--hair);border-radius:14px;padding:20px;background:linear-gradient(180deg,var(--panel),var(--panel2))}
+.hnote h3{font-family:var(--disp);font-size:15.5px;margin:0 0 10px;display:flex;gap:9px;align-items:center;color:var(--bright)}
+.dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.dot.det{background:var(--det)} .dot.llm{background:var(--llm)} .dot.hum{background:var(--human)}
+.hnote p{margin:0;color:#b7c4d8;font-size:13.5px}
+
+/* ============================== demo ============================== */
+#demo{padding-top:70px}
+.demo-shell{
+  border:1px solid var(--hair);border-radius:20px;background:var(--bg2);
+  box-shadow:0 40px 100px -40px rgba(0,0,0,.85);overflow:hidden;
+}
+.demo-top{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--hair);background:var(--panel2);flex-wrap:wrap}
+.demo-top .term-title{margin-left:0}
+.demo-status{font-family:var(--mono);font-size:11.5px;color:var(--llm);margin-left:auto;display:flex;align-items:center;gap:8px}
+.demo-status .spin{width:9px;height:9px;border:1.5px solid var(--llm);border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.demo-grid{display:grid;grid-template-columns:1.15fr 1fr 1fr;min-height:480px}
+@media (max-width:1020px){.demo-grid{grid-template-columns:1fr 1fr}.demo-col.audit-col{grid-column:1/-1;border-left:none;border-top:1px solid var(--hair)}}
+@media (max-width:720px){.demo-grid{grid-template-columns:1fr}.demo-col{border-left:none!important;border-top:1px solid var(--hair)}}
+.demo-col{padding:18px;border-left:1px solid var(--hair);min-width:0}
+.demo-col:first-child{border-left:none}
+.col-lbl{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin:0 0 13px;display:flex;align-items:center;gap:8px}
+.col-lbl .cnt{margin-left:auto;color:var(--muted);letter-spacing:0}
+
+/* register table */
+table.reg{width:100%;border-collapse:collapse;font-size:12px}
+.reg th{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;padding:7px 6px;border-bottom:1px solid var(--hair)}
+.reg td{padding:8px 6px;border-bottom:1px solid var(--hair2);transition:background .5s}
+.reg tr:last-child td{border-bottom:none}
+.reg .doc{font-family:var(--mono);font-size:11.5px;color:var(--ink);white-space:nowrap}
+.reg .ttl{color:var(--muted);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:760px){.reg th:nth-child(2),.reg td:nth-child(2){display:none}}
+.reg .due{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.reg .due.over{color:var(--human)}
+.pill{font-family:var(--mono);font-size:10px;border:1px solid var(--hair);border-radius:14px;padding:2px 9px;white-space:nowrap;color:var(--muted);transition:all .4s}
+.pill.issued{color:var(--ok);border-color:rgba(95,190,138,.5);background:var(--ok-soft)}
+.pill.committed{color:var(--llm);border-color:rgba(224,162,60,.5);background:var(--llm-soft)}
+.pill.progress{color:var(--det);border-color:rgba(79,179,196,.5);background:var(--det-soft)}
+.pill.hold{color:var(--human);border-color:rgba(255,126,138,.5);background:var(--human-soft)}
+tr.scan-hit td{background:rgba(224,162,60,.07)}
+tr.commit-flash td{background:rgba(95,190,138,.14)}
+tr.target td{background:rgba(79,179,196,.08)}
+
+/* mail cards */
+.mailbox{display:flex;flex-direction:column;gap:10px;max-height:430px;overflow:hidden}
+.mail{border:1px solid var(--hair);border-radius:12px;padding:12px 14px;background:var(--panel2);animation:mailin .45s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes mailin{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.mail .mh{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-bottom:6px;flex-wrap:wrap}
+.mail .dir{border-radius:4px;padding:1px 6px;font-size:9.5px;letter-spacing:.08em}
+.mail.out .dir{background:var(--det-soft);color:var(--det);border:1px solid rgba(79,179,196,.4)}
+.mail.in .dir{background:var(--llm-soft);color:var(--llm);border:1px solid rgba(224,162,60,.4)}
+.mail .ms{font-size:12.5px;color:var(--ink);font-weight:500;margin-bottom:4px}
+.mail .mb{font-size:12px;color:var(--muted);line-height:1.55;min-height:16px}
+.mail .verdict{margin-top:8px;font-family:var(--mono);font-size:10.5px;display:inline-block;border-radius:5px;padding:2px 8px}
+.verdict.act{color:var(--llm);background:var(--llm-soft);border:1px solid rgba(224,162,60,.4)}
+.verdict.noise{color:var(--dim);background:#1a2433;border:1px solid var(--hair)}
+.xtract{border:1px dashed rgba(224,162,60,.45);border-radius:12px;padding:11px 13px;background:rgba(224,162,60,.05);font-family:var(--mono);font-size:11px;line-height:1.75;color:#d9c39a;white-space:pre-wrap;animation:mailin .4s ease}
+.xtract .key{color:var(--llm)}
+
+/* gate + audit */
+.gatebox{display:flex;flex-direction:column;gap:10px}
+.gate-card{border:1.5px solid var(--human);border-radius:14px;background:var(--human-soft);padding:14px;animation:mailin .45s cubic-bezier(.2,.9,.3,1.2)}
+.gate-card .gh{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--human);margin-bottom:8px}
+.gate-card .gt{font-size:13px;color:var(--bright);margin-bottom:3px;font-weight:500}
+.gate-card .gd{font-size:12px;color:#e0b6bb;margin-bottom:12px}
+.gate-card .conf{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.gate-btns{display:flex;gap:9px;margin-top:10px}
+.gbtn{font-family:var(--disp);font-weight:600;font-size:12.5px;border-radius:8px;padding:7px 15px;cursor:pointer;border:1px solid;transition:filter .15s,transform .1s}
+.gbtn:active{transform:scale(.97)}
+.gbtn.ok{background:var(--ok);border-color:var(--ok);color:#04120b}
+.gbtn.no{background:transparent;border-color:var(--edge);color:var(--muted)}
+.gbtn.ok:hover,.gbtn.no:hover{filter:brightness(1.15)}
+.auto-bar{height:3px;border-radius:2px;background:#2c3a4f;margin-top:11px;overflow:hidden}
+.auto-bar i{display:block;height:100%;background:var(--human);width:100%;transform-origin:left}
+.auto-lbl{font-family:var(--mono);font-size:9.5px;color:var(--dim);margin-top:5px}
+.gate-done{border:1px solid var(--hair);border-radius:12px;padding:10px 13px;font-family:var(--mono);font-size:11px;color:var(--muted);animation:mailin .3s ease}
+.gate-done.ok{color:var(--ok);border-color:rgba(95,190,138,.35)}
+.gate-done.no{color:var(--human);border-color:rgba(255,126,138,.3)}
+.gate-empty{border:1px dashed var(--edge);border-radius:12px;padding:16px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.audit-stream{font-family:var(--mono);font-size:11px;line-height:1.95;max-height:430px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end}
+.demo-foot{padding:12px 20px;border-top:1px solid var(--hair);background:var(--panel2);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.demo-foot .fnote{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.demo-foot .replay{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--det);background:none;border:1px solid rgba(79,179,196,.4);border-radius:8px;padding:5px 13px;cursor:pointer}
+.demo-foot .replay:hover{background:var(--det-soft)}
+
+/* ============================== principles ============================== */
+.prin-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+@media (max-width:860px){.prin-grid{grid-template-columns:1fr}}
+.prin{border:1px solid var(--hair);border-radius:16px;padding:28px;background:linear-gradient(180deg,var(--panel),var(--panel2));position:relative;overflow:hidden}
+.prin::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--det),transparent 70%)}
+.prin.a2::before{background:linear-gradient(90deg,var(--llm),transparent 70%)}
+.prin.a3::before{background:linear-gradient(90deg,var(--human),transparent 70%)}
+.prin.a4::before{background:linear-gradient(90deg,var(--ok),transparent 70%)}
+.prin .num{font-family:var(--mono);font-size:11px;color:var(--dim);display:block;margin-bottom:14px}
+.prin h3{font-family:var(--disp);font-size:19px;margin:0 0 10px;color:var(--bright);letter-spacing:-.01em}
+.prin p{margin:0;color:#b7c4d8;font-size:14px}
+
+/* ============================== workflows ============================== */
+.wf-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+@media (max-width:1000px){.wf-grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:600px){.wf-grid{grid-template-columns:1fr}}
+.wf{border:1px solid var(--hair);border-radius:16px;padding:22px;background:var(--panel2);display:flex;flex-direction:column;min-height:190px}
+.wf.live{border-color:rgba(79,179,196,.55);background:linear-gradient(180deg,rgba(79,179,196,.09),var(--panel2))}
+.wf .wid{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--dim);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.wf.live .wid{color:var(--det)}
+.wf .stat{margin-left:auto;font-size:9.5px;border-radius:10px;padding:1px 8px;letter-spacing:.1em}
+.wf.live .stat{color:var(--ok);border:1px solid rgba(95,190,138,.45)}
+.wf .stat.soon{color:var(--dim);border:1px solid var(--hair)}
+.wf h3{font-family:var(--disp);font-size:16.5px;margin:0 0 8px;color:var(--bright)}
+.wf p{margin:0;font-size:13px;color:var(--muted);flex:1}
+.wf .foot{font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:14px}
+.wf.live .foot{color:var(--det)}
+
+/* ============================== pricing ============================== */
+.price-shell{display:grid;grid-template-columns:1.1fr .9fr;gap:44px;align-items:center}
+@media (max-width:900px){.price-shell{grid-template-columns:1fr}}
+.price-card{border:1px solid rgba(79,179,196,.4);border-radius:20px;padding:34px;background:linear-gradient(180deg,rgba(79,179,196,.08),var(--panel2));position:relative}
+.price-card .pc-lbl{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--det);margin-bottom:14px}
+.price-big{font-family:var(--disp);font-weight:700;font-size:46px;letter-spacing:-.02em;color:var(--bright);line-height:1}
+.price-big small{font-size:16px;color:var(--muted);font-weight:500;letter-spacing:0}
+.price-vs{margin:18px 0 0;padding-top:18px;border-top:1px dashed var(--hair);font-size:13.5px;color:var(--muted)}
+.price-vs b{color:var(--llm)}
+ul.pricelist{list-style:none;margin:26px 0 0;padding:0;display:flex;flex-direction:column;gap:12px}
+ul.pricelist li{display:flex;gap:12px;font-size:14.5px;color:#b7c4d8;align-items:baseline}
+ul.pricelist li::before{content:"—";color:var(--det);font-family:var(--mono);flex:0 0 auto}
+ul.pricelist b{color:var(--bright);font-weight:600}
+
+/* ============================== cta ============================== */
+.cta-shell{
+  border:1px solid var(--hair);border-radius:24px;padding:64px 40px;text-align:center;
+  background:
+    radial-gradient(ellipse 60% 120% at 50% -20%,rgba(79,179,196,.13),transparent 70%),
+    linear-gradient(180deg,var(--panel),var(--panel2));
+  position:relative;overflow:hidden;
+}
+.cta-shell::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(rgba(79,179,196,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(79,179,196,.05) 1px,transparent 1px);
+  background-size:36px 36px;
+  mask-image:radial-gradient(ellipse 70% 90% at 50% 0%,#000,transparent 80%);
+  -webkit-mask-image:radial-gradient(ellipse 70% 90% at 50% 0%,#000,transparent 80%);
+}
+.cta-shell h2{font-size:clamp(28px,4vw,44px)}
+.cta-shell p{color:var(--muted);max-width:56ch;margin:0 auto 32px}
+.cta-mail{font-family:var(--mono);font-size:12.5px;color:var(--dim);margin-top:18px;display:block}
+
+/* ============================== footer ============================== */
+footer{border-top:1px solid var(--hair);padding:36px 0 48px;margin-top:40px}
+.foot-in{display:flex;flex-wrap:wrap;gap:14px 30px;align-items:center;font-family:var(--mono);font-size:12px;color:var(--dim)}
+.foot-in .fm{font-family:var(--disp);font-weight:600;color:var(--muted);font-size:14px}
+.foot-in .right{margin-left:auto;display:flex;gap:22px}
+.foot-in a{color:var(--dim)} .foot-in a:hover{color:var(--muted)}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-in">
+    <span class="wordmark">DocBot<span class="cursor"></span></span>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#demo">Live demo</a>
+      <a href="#workflows">Workflows</a>
+      <a href="#pricing">Pricing</a>
+      <span class="pulse-chip"><span class="pulse"></span>agent online · tenant-zero</span>
+      <a class="btn" href="#cta">Get early access</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============================== HERO ============================== -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Proactive agents · document control · AEC</p>
+      <h1>It wakes up<br>and <span class="amber">chases.</span></h1>
+      <p class="lede">Every project has a register full of overdue deliverables and a person whose
+        job is to chase them. <b>DocBot is that loop, run by an agent</b> — it scans your register on a
+        schedule, chases the right owner, reads the replies, and proposes the update.
+        A human approves anything that carries contractual weight. Every step is logged.</p>
+      <div class="hero-ctas">
+        <a class="btn" href="#cta">Run it on your register</a>
+        <a class="btn ghost" href="#demo">Watch it work ↓</a>
+      </div>
+      <p class="hero-note">overlay on Aconex / Procore / TeamBinder — not a replacement</p>
+    </div>
+    <div class="term rv">
+      <div class="term-bar">
+        <span class="term-dot"></span><span class="term-dot"></span><span class="term-dot"></span>
+        <span class="term-title">docbot · register-keeping loop · 06:00 AEST</span>
+        <span class="term-badge">LIVE</span>
+      </div>
+      <div class="term-body" id="heroTerm"></div>
+    </div>
+  </div>
+</header>
+
+<div class="hr"></div>
+
+<!-- ============================== PROBLEM ============================== -->
+<section id="problem">
+  <div class="wrap">
+    <p class="sec-eyebrow rv">01 · The gap</p>
+    <h2 class="rv">Aconex notifies.<br>Nobody chases.</h2>
+    <p class="sec-sub rv">Client-mandated document platforms tell you a document <i>arrived</i>. They don't
+      notice what <b>didn't</b> arrive — the transmittal that's nine days overdue, the consultant who went
+      quiet, the reply sitting in an inbox that closes the loop. That work lands on people.</p>
+    <div class="prob-grid">
+      <div class="prob rv">
+        <span class="tag">The cost</span>
+        <p class="big">AUD <span>8–11k</span>/mo</p>
+        <p>Loaded cost of a document controller — much of it spent scanning registers and writing
+          the same chase email again.</p>
+      </div>
+      <div class="prob rv">
+        <span class="tag">The blind spot</span>
+        <p class="big"><span>Overdue</span> is silent</p>
+        <p>Platforms fire events when documents move. The expensive failures are the ones where
+          nothing moved — and no event ever fires.</p>
+      </div>
+      <div class="prob rv">
+        <span class="tag">The loop</span>
+        <p class="big">Chase → reply → <span>update</span></p>
+        <p>The reply comes back as free text. Someone has to read it, map it to the register,
+          and make the entry. That's the loop DocBot closes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="hr"></div>
+
+<!-- ============================== HOW ============================== -->
+<section id="how">
+  <div class="wrap">
+    <p class="sec-eyebrow rv">02 · How it works</p>
+    <h2 class="rv">A deterministic spine.<br>A model used like a scalpel.</h2>
+    <p class="sec-sub rv">Most of the loop is plain code — reproducible run-to-run, defensible
+      line-by-line. The model fires at exactly <b>four decision points</b> where the register is
+      genuinely ambiguous. Anything consequential waits at a single human checkpoint.</p>
+
+    <div class="legend rv">
+      <span class="chip"><span class="sw det"></span>Deterministic — plain code</span>
+      <span class="chip"><span class="sw llm"></span>Model judgment — LLM node</span>
+      <span class="chip"><span class="sw hum"></span>Human checkpoint</span>
+    </div>
+
+    <div class="lane rv">
+      <p class="lane-lbl">Lane A · the scheduled chase loop</p>
+      <div class="lane-row">
+        <div class="nodechip det"><span class="k">DET</span><span class="id">register.scan</span><span class="ds">find what's overdue</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip det"><span class="k">DET</span><span class="id">policy.cadence</span><span class="ds">remind → chase → escalate</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip llm"><span class="k">LLM</span><span class="id">exception.check</span><span class="ds">should this rule fire?</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip llm"><span class="k">LLM</span><span class="id">infer.owner</span><span class="ds">when metadata is blank</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip det"><span class="k">DET</span><span class="id">compose.chase</span><span class="ds">template merge</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip hum"><span class="k">GATE</span><span class="id">send / approve</span><span class="ds">internal auto · client gated</span></div>
+      </div>
+    </div>
+
+    <div class="lane rv">
+      <p class="lane-lbl">Lane B · inbound — extract &amp; propose</p>
+      <div class="lane-row">
+        <div class="nodechip det"><span class="k">DET</span><span class="id">email.ingest</span><span class="ds">monitor the inbox</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip llm"><span class="k">LLM</span><span class="id">classify.inbound</span><span class="ds">actionable or noise?</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip llm"><span class="k">LLM</span><span class="id">extract.interpret</span><span class="ds">prose → state change</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip det"><span class="k">DET</span><span class="id">match.register</span><span class="ds">lookup by reference</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip hum"><span class="k">GATE</span><span class="id">approval.gate</span><span class="ds">propose, not commit</span></div>
+        <span class="flow-arr">→</span>
+        <div class="nodechip det"><span class="k">DET</span><span class="id">register.commit</span><span class="ds">write state + audit</span></div>
+      </div>
+    </div>
+
+    <div class="how-notes">
+      <div class="hnote rv"><h3><span class="dot llm"></span>Four model nodes, no more</h3>
+        <p><code>extract.interpret</code> reads reply prose and maps it to a register change — the
+        irreducible one. <code>classify.inbound</code>, <code>infer.owner</code> and
+        <code>exception.check</code> handle triage, blank metadata, and knowing when <i>not</i> to fire.</p></div>
+      <div class="hnote rv"><h3><span class="dot det"></span>The spine is boring on purpose</h3>
+        <p>Overdue maths, cadence rules, lookups, the send, the commit, the audit write — plain code.
+        The graph's edges are deterministic; the model only ever lives <i>inside</i> a node.</p></div>
+      <div class="hnote rv"><h3><span class="dot hum"></span>One gate, everything logged</h3>
+        <p>Low-risk internal nudges auto-send. Anything client-facing or contractual parks at the
+        approval gate until a human signs off. Approve or reject, the trail records it.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="hr"></div>
+
+<!-- ============================== DEMO ============================== -->
+<section id="demo">
+  <div class="wrap">
+    <p class="sec-eyebrow rv">03 · Live demo</p>
+    <h2 class="rv">Watch a morning happen.</h2>
+    <p class="sec-sub rv">This is the actual loop running on <b>tenant-zero</b> — our synthetic firm,
+      Meridian Structural &amp; Civil. Overdue items get chased, counterparties reply, the model reads
+      the prose, and proposals queue at the gate. <b>The approve button is yours.</b></p>
+
+    <div class="demo-shell rv" id="demoShell">
+      <div class="demo-top">
+        <span class="term-dot"></span><span class="term-dot"></span><span class="term-dot"></span>
+        <span class="term-title">meridian-sc · workflow 01 · register-keeping loop</span>
+        <span class="demo-status" id="demoStatus"><span class="spin"></span><span id="demoStatusTxt">idle</span></span>
+      </div>
+      <div class="demo-grid">
+        <div class="demo-col">
+          <p class="col-lbl">register <span class="cnt" id="regCnt"></span></p>
+          <table class="reg"><thead>
+            <tr><th>doc no</th><th>title</th><th>due ('26)</th><th>status</th></tr>
+          </thead><tbody id="regBody"></tbody></table>
+        </div>
+        <div class="demo-col">
+          <p class="col-lbl">mail · doccontrol@meridian-sc</p>
+          <div class="mailbox" id="mailBox"></div>
+        </div>
+        <div class="demo-col audit-col">
+          <p class="col-lbl">approval gate → audit trail</p>
+          <div class="gatebox" id="gateBox"><div class="gate-empty">nothing waiting — the agent is working</div></div>
+          <p class="col-lbl" style="margin-top:16px">audit.log <span class="cnt">immutable</span></p>
+          <div class="audit-stream" id="auditStream"></div>
+        </div>
+      </div>
+      <div class="demo-foot">
+        <span class="fnote">synthetic data · same code path as production · propose-not-commit</span>
+        <button class="replay" id="replayBtn">↻ replay</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="hr"></div>
+
+<!-- ============================== PRINCIPLES ============================== -->
+<section id="principles">
+  <div class="wrap">
+    <p class="sec-eyebrow rv">04 · The stance</p>
+    <h2 class="rv">Built to be trusted<br>with a paper trail.</h2>
+    <p class="sec-sub rv">Document control is an audit-sensitive job. The architecture treats that as a
+      feature, not a compliance afterthought.</p>
+    <div class="prin-grid">
+      <div class="prin rv"><span class="num">/01</span><h3>Overlay, not system of record</h3>
+        <p>Aconex and Procore own the register. DocBot reads it and acts on it — chases, interprets,
+        proposes. It never tries to replace the CDE your client mandated.</p></div>
+      <div class="prin a2 rv"><span class="num">/02</span><h3>Deterministic spine, LLM scalpel</h3>
+        <p>If a step can be plain code, it is plain code. The model is reserved for the four
+        judgment calls where prose meets the register — and each call is logged with its confidence.</p></div>
+      <div class="prin a3 rv"><span class="num">/03</span><h3>Propose, not commit</h3>
+        <p>The agent chases autonomously — that's low-risk. But a register entry or a client-facing
+        message is contractual weight, so it parks at the gate until a human approves it.</p></div>
+      <div class="prin a4 rv"><span class="num">/04</span><h3>Audit-grade evidence trail</h3>
+        <p>Every scan, every model judgment, every approval and every send writes an immutable audit
+        row. When someone asks "why did this change?", the answer is one query away.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="hr"></div>
+
+<!-- ============================== WORKFLOWS ============================== -->
+<section id="workflows">
+  <div class="wrap">
+    <p class="sec-eyebrow rv">05 · Workflows</p>
+    <h2 class="rv">One spine. Named workflows on top.</h2>
+    <p class="sec-sub rv">DocBot isn't a build-your-own-agent kit. It's a set of <b>pre-built, named
+      workflows</b> covering real job functions — deployed on shared infrastructure, so each new
+      workflow is an add-on, not a rebuild.</p>
+    <div class="wf-grid">
+      <div class="wf live rv">
+        <p class="wid">WF·01 <span class="stat">LIVE</span></p>
+        <h3>Register-keeping loop</h3>
+        <p>Scan the register, chase overdue deliverables on a cadence, read the replies, propose the
+        update. The loop you just watched.</p>
+        <p class="foot">the one above ↑</p>
+      </div>
+      <div class="wf rv">
+        <p class="wid">WF·02 <span class="stat soon">BLUEPRINT</span></p>
+        <h3>Submittal review</h3>
+        <p>Track submittal packages through review cycles; chase reviewers, flag stalled ball-in-court,
+        propose status changes.</p>
+        <p class="foot">same spine · same gate</p>
+      </div>
+      <div class="wf rv">
+        <p class="wid">WF·03 <span class="stat soon">BLUEPRINT</span></p>
+        <h3>RFI routing</h3>
+        <p>Triage inbound RFIs, route to the right discipline lead, chase responses against the
+        contractual clock.</p>
+        <p class="foot">same spine · same gate</p>
+      </div>
+      <div class="wf rv">
+        <p class="wid">WF·04 <span class="stat soon">BLUEPRINT</span></p>
+        <h3>Variation tracking</h3>
+        <p>Watch correspondence for scope-change language, open variation records early, keep the
+        register of exposure current.</p>
+        <p class="foot">same spine · same gate</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="hr"></div>
+
+<!-- ============================== PRICING ============================== -->
+<section id="pricing">
+  <div class="wrap price-shell">
+    <div>
+      <p class="sec-eyebrow rv">06 · Pricing</p>
+      <h2 class="rv">Priced per workflow.<br>Not per seat.</h2>
+      <p class="sec-sub rv" style="margin-bottom:0">Inbox volume drives the work, not headcount — so
+        seats would be the wrong meter. You buy a running workflow, volume-tiered, doing a defined
+        job around the clock.</p>
+      <ul class="pricelist">
+        <li><b>Volume-tiered</b> — pricing tracks your register and inbox, not your org chart</li>
+        <li><b>Add-on workflows</b> land on the spine you've already paid for</li>
+        <li><b>Pilot on your data</b> — we run tenant-zero against your export before you commit</li>
+      </ul>
+    </div>
+    <div class="price-card rv">
+      <p class="pc-lbl">Workflow 01 · register-keeping</p>
+      <p class="price-big">from AUD 1,500<small> /month</small></p>
+      <p class="price-vs">A loaded document-controller seat runs <b>AUD 8,000–11,000 a month</b> —
+        and still sleeps, takes leave, and moves on. The loop doesn't.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== CTA ============================== -->
+<section id="cta">
+  <div class="wrap">
+    <div class="cta-shell rv">
+      <p class="sec-eyebrow" style="justify-content:center;display:flex">Early access · pilot program</p>
+      <h2>Put an agent on your register.</h2>
+      <p>We're onboarding a small number of mid-market engineering and construction firms in
+        Australia. Send us a register export — we'll show you your own backlog being chased
+        within a week.</p>
+      <a class="btn" href="mailto:andrewquinnjaques@gmail.com?subject=DocBot%20early%20access">Request a pilot</a>
+      <span class="cta-mail">or write to andrewquinnjaques@gmail.com</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <span class="fm">DocBot</span>
+    <span>proactive document control · AEC</span>
+    <div class="right">
+      <a href="#how">Architecture</a>
+      <a href="#demo">Demo</a>
+      <a href="#cta">Contact</a>
+    </div>
+  </div>
+  <div class="wrap" style="margin-top:14px">
+    <span style="font-family:var(--mono);font-size:11px;color:#3d4a5e">© 2026 · demo data is synthetic (tenant-zero) · deterministic spine · LLM scalpel · propose-not-commit</span>
+  </div>
+</footer>
+
+<script>
+/* ================================================================
+   DocBot landing — hero terminal + interactive loop demo.
+   Everything below simulates the same state machine the product
+   runs: scan → cadence → exception → chase → reply → classify →
+   extract → propose → gate → commit → audit.
+   ================================================================ */
+(function(){
+"use strict";
+const $ = (id)=>document.getElementById(id);
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const sleep = (ms)=>new Promise(r=>setTimeout(r, reduced? Math.min(ms,120): ms));
+
+/* ---------- scroll reveals ---------- */
+const io = new IntersectionObserver(es=>es.forEach(e=>{
+  if(e.isIntersecting){ e.target.classList.add("on"); io.unobserve(e.target); }
+}),{threshold:.12});
+document.querySelectorAll(".rv").forEach(el=>io.observe(el));
+
+/* ---------- simulated clock (a 6am agent morning) ---------- */
+function makeClock(h,m){ let t=h*60+m; return {
+  tick(min){ t+=min; },
+  str(){ const H=String(Math.floor(t/60)%24).padStart(2,"0"), M=String(t%60).padStart(2,"0");
+          return H+":"+M; }
+};}
+
+/* ================================================================
+   HERO TERMINAL — a curated morning, typed forever
+   ================================================================ */
+const heroLines = [
+  ["det","schedule.tick","fired · 06:00 · tenant meridian-sc"],
+  ["det","register.scan","4 overdue · worst 9d (HBR-CIV-0101)"],
+  ["llm","exception.check","RDG-STR-0101 on hold → suppress"],
+  ["det","policy.cadence","MER-STR-0104 → chase (attempt 2)"],
+  ["llm","infer.owner","blank field → j.harper@ (0.82)"],
+  ["det","dispatch.send","chase → l.romano@arcadia ✉"],
+  ["det","email.ingest","1 reply · 06:47"],
+  ["llm","classify.inbound","actionable (0.94)"],
+  ["llm","extract.interpret","\"issued this morning\" → close (0.88)"],
+  ["hum","approval.gate","queued · close HBR-CIV-0101"],
+  ["ok","register.commit","HBR-CIV-0101 → Issued ✓ (human-approved)"],
+  ["det","audit.log","11 rows written · trail complete"],
+];
+const heroCls = {det:"n-det",llm:"n-llm",hum:"n-hum",ok:"n-ok"};
+async function heroLoop(){
+  const box = $("heroTerm"); if(!box) return;
+  const clock = makeClock(6,0);
+  for(;;){
+    box.innerHTML = "";
+    for(const [kind,node,detail] of heroLines){
+      const div = document.createElement("div"); div.className="tl";
+      div.innerHTML = '<span class="t">'+clock.str()+'</span>  <span class="'+heroCls[kind]+'">'
+        + node.padEnd(18," ") + '</span><span class="d"></span>';
+      const target = div.querySelector(".d");
+      box.appendChild(div);
+      while(box.children.length>12) box.removeChild(box.firstChild);
+      if(reduced){ target.textContent = detail; }
+      else {
+        const caret=document.createElement("span"); caret.className="caret"; div.appendChild(caret);
+        for(let i=0;i<=detail.length;i++){ target.textContent=detail.slice(0,i); await sleep(11); }
+        caret.remove();
+      }
+      clock.tick(2+Math.floor(Math.random()*7));
+      await sleep(reduced?260:520);
+    }
+    await sleep(2600);
+  }
+}
+heroLoop();
+
+/* ================================================================
+   INTERACTIVE DEMO
+   ================================================================ */
+const REG = [
+  {doc:"HBR-CIV-0101", title:"Stormwater Layout",      due:"06-08", status:"For Review",  over:9},
+  {doc:"MER-STR-0104", title:"Transfer Beam Details",  due:"06-11", status:"Pending",     over:6},
+  {doc:"RDG-ARC-0102", title:"Floor Plan — Level 3",   due:"06-12", status:"Pending",     over:5},
+  {doc:"HBR-ELE-0104", title:"Cable Schedule",         due:"06-13", status:"In Progress", over:4},
+  {doc:"RDG-STR-0101", title:"Footing Layout",         due:"06-10", status:"On Hold",     over:7, hold:true},
+  {doc:"MER-ARC-0103", title:"Door Schedule",          due:"06-24", status:"Committed",   over:0},
+];
+const pillCls = s=>({"Issued":"issued","Committed":"committed","In Progress":"progress","On Hold":"hold"}[s]||"");
+
+const state = { running:false, decided:null, clock:null, cycle:0 };
+
+function renderRegister(){
+  const tb = $("regBody"); tb.innerHTML="";
+  let over=0;
+  for(const r of REG){
+    if(r.over>0 && r.status!=="Issued") over++;
+    const tr=document.createElement("tr"); tr.dataset.doc=r.doc;
+    const isOver = r.over>0 && r.status!=="Issued";
+    tr.innerHTML =
+      '<td class="doc">'+r.doc+'</td><td class="ttl">'+r.title+'</td>'+
+      '<td class="due'+(isOver?" over":"")+'">'+r.due+(isOver?" ·"+r.over+"d":"")+'</td>'+
+      '<td><span class="pill '+pillCls(r.status)+'">'+r.status+'</span></td>';
+    tb.appendChild(tr);
+  }
+  $("regCnt").textContent = over+" overdue";
+}
+function rowOf(doc){ return document.querySelector('tr[data-doc="'+doc+'"]'); }
+
+function setStatusTxt(t){ $("demoStatusTxt").textContent=t; }
+
+function audit(kind,node,detail){
+  const s=$("auditStream");
+  const div=document.createElement("div"); div.className="tl";
+  div.innerHTML='<span class="t">'+state.clock.str()+'</span> <span class="'+heroCls[kind]+'">'+node+'</span> <span class="d">· '+detail+'</span>';
+  s.appendChild(div);
+  while(s.children.length>9) s.removeChild(s.firstChild);
+  state.clock.tick(1+Math.floor(Math.random()*4));
+}
+
+function mail(dir,sub,body,verdict){
+  const box=$("mailBox");
+  const div=document.createElement("div"); div.className="mail "+dir;
+  div.innerHTML='<div class="mh"><span class="dir">'+(dir==="out"?"OUT ▸":"◂ IN")+'</span><span>'+
+    (dir==="out"?"doccontrol@meridian-sc":"counterparty")+'</span></div>'+
+    '<div class="ms">'+sub+'</div><div class="mb"></div>';
+  box.appendChild(div);
+  while(box.children.length>3) box.removeChild(box.firstChild);
+  return { async type(){
+      const mb=div.querySelector(".mb");
+      if(reduced){ mb.textContent=body; return; }
+      for(let i=0;i<=body.length;i++){ mb.textContent=body.slice(0,i); await sleep(8); }
+    },
+    tag(cls,txt){ const v=document.createElement("span"); v.className="verdict "+cls; v.textContent=txt; div.appendChild(v); }
+  };
+}
+
+function extraction(json){
+  const box=$("mailBox");
+  const div=document.createElement("div"); div.className="xtract";
+  box.appendChild(div);
+  while(box.children.length>3) box.removeChild(box.firstChild);
+  return (async()=>{
+    if(reduced){ div.innerHTML=json; return; }
+    let shown="";
+    const plain=json.replace(/<[^>]+>/g,"");
+    for(let i=0;i<=plain.length;i++){ div.textContent=plain.slice(0,i); await sleep(7); }
+    div.innerHTML=json;
+  })();
+}
+
+function gateCard(title,desc,conf){
+  const box=$("gateBox"); box.innerHTML="";
+  const card=document.createElement("div"); card.className="gate-card";
+  card.innerHTML='<div class="gh">⏸ waiting for a human</div>'+
+    '<div class="gt">'+title+'</div><div class="gd">'+desc+'</div>'+
+    '<span class="conf">confidence '+conf+'</span>'+
+    '<div class="gate-btns"><button class="gbtn ok">Approve</button><button class="gbtn no">Reject</button></div>'+
+    '<div class="auto-bar"><i></i></div><div class="auto-lbl">demo auto-approves in <span>7</span>s — or decide for it</div>';
+  box.appendChild(card);
+  return new Promise(resolve=>{
+    let done=false; const finish=v=>{ if(done)return; done=true; resolve(v); };
+    card.querySelector(".gbtn.ok").onclick=()=>finish({by:"you",ok:true});
+    card.querySelector(".gbtn.no").onclick=()=>finish({by:"you",ok:false});
+    const bar=card.querySelector(".auto-bar i"), lbl=card.querySelector(".auto-lbl span");
+    const T = reduced? 2500: 7000; const t0=performance.now();
+    (function frame(){
+      if(done) return;
+      const p=Math.min(1,(performance.now()-t0)/T);
+      bar.style.transform="scaleX("+(1-p)+")";
+      lbl.textContent=Math.ceil((T-(performance.now()-t0))/1000);
+      if(p>=1){ finish({by:"auto",ok:true}); return; }
+      requestAnimationFrame(frame);
+    })();
+  });
+}
+function gateResult(ok,txt){
+  const box=$("gateBox"); box.innerHTML="";
+  const d=document.createElement("div"); d.className="gate-done "+(ok?"ok":"no"); d.textContent=txt;
+  box.appendChild(d);
+}
+function gateEmpty(){
+  $("gateBox").innerHTML='<div class="gate-empty">nothing waiting — the agent is working</div>';
+}
+
+async function flashRow(doc,cls,ms){
+  const tr=rowOf(doc); if(!tr) return;
+  tr.classList.add(cls); await sleep(ms); tr.classList.remove(cls);
+}
+function setRowStatus(doc,status,newOver){
+  const r=REG.find(x=>x.doc===doc); if(!r) return;
+  r.status=status; if(newOver!==undefined) r.over=newOver;
+  const tr=rowOf(doc);
+  tr.querySelector(".pill").outerHTML='<span class="pill '+pillCls(status)+'">'+status+'</span>';
+  if(r.over===0||status==="Issued"){ const d=tr.querySelector(".due"); d.classList.remove("over"); d.textContent=r.due; }
+  let overCnt=0; for(const x of REG) if(x.over>0&&x.status!=="Issued") overCnt++;
+  $("regCnt").textContent=overCnt+" overdue";
+}
+
+/* ---------- the scripted cycles ---------- */
+async function scanPhase(){
+  setStatusTxt("register.scan");
+  audit("det","schedule.tick","fired");
+  const overdocs=REG.filter(r=>r.over>0&&r.status!=="Issued").map(r=>r.doc);
+  for(const d of overdocs){ flashRow(d,"scan-hit",1200); await sleep(140); }
+  audit("det","register.scan",overdocs.length+" overdue found");
+  await sleep(900);
+}
+
+async function cycleClose(){
+  const DOC="HBR-CIV-0101";
+  await scanPhase();
+  setStatusTxt("policy.cadence");
+  rowOf(DOC).classList.add("target");
+  audit("det","policy.cadence",DOC+" → chase (attempt 2)");
+  await sleep(700);
+  setStatusTxt("exception.check · LLM");
+  audit("llm","exception.check","no suppression → fire (0.91)");
+  await sleep(700);
+  setStatusTxt("dispatch.send");
+  const out=mail("out","Overdue: "+DOC+" — Stormwater Layout",
+    "Hi — HBR-CIV-0101 is 9 days overdue (due 2026-06-08). Please advise current status and an expected issue date.");
+  audit("det","dispatch.send","chase → d.mensah@meridian-sc");
+  await out.type(); await sleep(1400);
+
+  setStatusTxt("email.ingest");
+  const rep=mail("in","RE: Overdue: "+DOC,
+    "Morning — that one's done. Uploaded to Aconex first thing today, transmittal TR-4471. You can mark it issued.");
+  audit("det","email.ingest","1 reply received");
+  await rep.type(); await sleep(500);
+  setStatusTxt("classify.inbound · LLM");
+  rep.tag("act","classify.inbound → actionable · 0.94");
+  audit("llm","classify.inbound","actionable (0.94)");
+  await sleep(900);
+
+  setStatusTxt("extract.interpret · LLM");
+  await extraction('{ <span class="key">"doc_no"</span>: "HBR-CIV-0101",\n  <span class="key">"change_type"</span>: "close",\n  <span class="key">"new_status"</span>: "Issued",\n  <span class="key">"evidence"</span>: "uploaded … TR-4471",\n  <span class="key">"confidence"</span>: 0.88 }');
+  audit("llm","extract.interpret","prose → close (0.88)");
+  await sleep(600);
+
+  setStatusTxt("approval.gate · waiting");
+  audit("hum","approval.gate","queued · close "+DOC);
+  const v=await gateCard("close "+DOC+" → Issued",
+    "“uploaded to Aconex … TR-4471” · proposed by extract.interpret","0.88");
+  if(v.ok){
+    gateResult(true,"✓ approved by "+(v.by==="you"?"you":"reviewer (demo auto)")+" → committing");
+    audit("hum","approval.gate","approved by "+(v.by==="you"?"you":"reviewer"));
+    setStatusTxt("register.commit");
+    await sleep(500);
+    setRowStatus(DOC,"Issued",0);
+    flashRow(DOC,"commit-flash",1600);
+    audit("ok","register.commit",DOC+" → Issued ✓");
+  } else {
+    gateResult(false,"✕ rejected by you → reply re-queued for human review");
+    audit("hum","approval.gate","rejected → re-queued");
+  }
+  rowOf(DOC).classList.remove("target");
+  audit("det","audit.log","cycle written");
+  await sleep(2200); gateEmpty();
+}
+
+async function cycleNewDate(){
+  const DOC="MER-STR-0104";
+  setStatusTxt("policy.cadence");
+  rowOf(DOC).classList.add("target");
+  audit("det","policy.cadence",DOC+" → remind (attempt 1)");
+  await sleep(600);
+  const out=mail("out","Reminder: "+DOC+" — Transfer Beam Details",
+    "A friendly reminder that MER-STR-0104 was due 2026-06-11. Could you confirm status when you get a chance?");
+  audit("det","dispatch.send","remind → j.harper@meridian-sc ⚡ internal · auto");
+  await out.type(); await sleep(1300);
+
+  const rep=mail("in","RE: Reminder: "+DOC,
+    "Apologies for the delay — connection design review ran long. We'll have it across to you by the 24th.");
+  audit("det","email.ingest","1 reply received");
+  await rep.type();
+  rep.tag("act","classify.inbound → actionable · 0.9");
+  audit("llm","classify.inbound","actionable (0.90)");
+  await sleep(800);
+  setStatusTxt("extract.interpret · LLM");
+  await extraction('{ <span class="key">"doc_no"</span>: "MER-STR-0104",\n  <span class="key">"change_type"</span>: "new_commitment",\n  <span class="key">"promised_date"</span>: "2026-06-24",\n  <span class="key">"confidence"</span>: 0.79 }');
+  audit("llm","extract.interpret","new commitment → 06-24 (0.79)");
+  await sleep(500);
+  audit("hum","approval.gate","queued · re-baseline "+DOC);
+  const v=await gateCard("re-baseline "+DOC+" → due 2026-06-24",
+    "“we'll have it across by the 24th” → status Committed, new date","0.79");
+  if(v.ok){
+    gateResult(true,"✓ approved → date moved, cadence re-armed");
+    audit("hum","approval.gate","approved by "+(v.by==="you"?"you":"reviewer"));
+    const r=REG.find(x=>x.doc===DOC); r.due="06-24";
+    setRowStatus(DOC,"Committed",0);
+    flashRow(DOC,"commit-flash",1600);
+    audit("ok","register.commit",DOC+" → Committed · due 06-24");
+  } else {
+    gateResult(false,"✕ rejected → item stays overdue, cadence continues");
+    audit("hum","approval.gate","rejected → chase continues");
+  }
+  rowOf(DOC).classList.remove("target");
+  await sleep(2200); gateEmpty();
+}
+
+async function cycleSuppressAndNoise(){
+  const DOC="RDG-STR-0101";
+  setStatusTxt("exception.check · LLM");
+  rowOf(DOC).classList.add("target");
+  audit("det","policy.cadence",DOC+" → chase eligible (7d)");
+  await sleep(700);
+  audit("llm","exception.check","on hold — client instruction → suppress (0.95)");
+  await flashRow(DOC,"scan-hit",1200);
+  audit("det","audit.log","suppression recorded — no chase sent");
+  rowOf(DOC).classList.remove("target");
+  await sleep(1100);
+
+  setStatusTxt("email.ingest");
+  const junk=mail("in","Your weekly construction industry digest",
+    "Top stories this week: prefab momentum, tender season outlook… Unsubscribe anytime.");
+  await junk.type();
+  setStatusTxt("classify.inbound · LLM");
+  await sleep(600);
+  junk.tag("noise","classify.inbound → noise · discarded");
+  audit("llm","classify.inbound","noise (0.93) → discard");
+  audit("det","audit.log","discard recorded");
+  await sleep(1800);
+}
+
+async function runDemo(){
+  if(state.running) return; state.running=true;
+  $("mailBox").innerHTML=""; $("auditStream").innerHTML=""; gateEmpty();
+  for(const r of REG){ // reset data
+    if(r.doc==="HBR-CIV-0101"){r.status="For Review";r.over=9;r.due="06-08";}
+    if(r.doc==="MER-STR-0104"){r.status="Pending";r.over=6;r.due="06-11";}
+  }
+  state.clock=makeClock(6,0);
+  renderRegister();
+  setStatusTxt("waking up…");
+  await sleep(600);
+  await cycleClose();
+  await cycleNewDate();
+  await cycleSuppressAndNoise();
+  setStatusTxt("loop complete — sleeping until next tick");
+  audit("det","schedule.tick","next tick 07:00 · agent sleeping");
+  state.running=false;
+}
+
+renderRegister();
+const demoIO=new IntersectionObserver(es=>{
+  if(es.some(e=>e.isIntersecting)){ demoIO.disconnect(); runDemo(); }
+},{threshold:.25});
+demoIO.observe($("demoShell"));
+$("replayBtn").onclick=()=>{ if(!state.running) runDemo(); };
+
+})();
+</script>
+</body>
+</html>
